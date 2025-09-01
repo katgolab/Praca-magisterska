@@ -1,0 +1,54 @@
+import os
+import requests
+from tqdm import tqdm
+
+# Folder na wyniki
+os.makedirs("tcga_data", exist_ok=True)
+API_ENDPOINT = "https://api.gdc.cancer.gov"
+PROJECTS = ["TCGA-LUAD", "TCGA-LUSC"]
+
+def download_files(project_id, data_type, desc):
+    """
+    Pobiera WSZYSTKIE pliki danego typu (np. Masked Somatic Mutation, Clinical) dla wskazanego projektu TCGA.
+    """
+    filters = {
+    "op": "and",
+    "content": [
+        {"op": "in", "content": {"field": "cases.project.project_id", "value": [project_id]}},
+        {"op": "in", "content": {"field": "files.data_type", "value": ["Clinical Supplement"]}}
+    ]
+}
+
+    params = {
+        "filters": filters,
+        "format": "JSON",
+        "fields": "file_id,file_name",
+        "size": 5000
+    }
+    response = requests.post(f"{API_ENDPOINT}/files", json=params)
+    files = response.json()["data"]["hits"]
+    print(f" Znaleziono {len(files)} plików {desc} dla {project_id}.")
+    for f in tqdm(files, desc=f"Pobieranie {desc} dla {project_id}"):
+        file_id = f["file_id"]
+        file_name = f["file_name"]
+        url = f"{API_ENDPOINT}/data/{file_id}"
+        file_path = f"tcga_data/{file_name}"
+        for attempt in range(5):
+            try:
+                r = requests.get(url, timeout=30)
+                r.raise_for_status()
+                with open(file_path, "wb") as out_file:
+                    out_file.write(r.content)
+                break
+            except Exception as e:
+                print(f" Błąd przy pobieraniu {file_name} (próba {attempt+1}): {e}")
+        else:
+            print(f"Nie udało się pobrać pliku: {file_name}")
+
+print("Startuję pobieranie danych o mutacjach somatycznych i danych klinicznych z TCGA dla raka płuca...")
+for project in PROJECTS:
+    # Mutacje somatyczne (typ: Masked Somatic Mutation)
+    download_files(project, "Masked Somatic Mutation", "mutacji somatycznych (MAF)")
+    # Dane kliniczne (typ: Clinical)
+    download_files(project, "Clinical", "danych klinicznych")
+print("Pobieranie zakończone!")
